@@ -1,4 +1,4 @@
-module github.com/hellodword/tailscale-client-verifier
+module github.com/hellodword/tailscale-derp-client-verifier
 
 go 1.22.0
 
