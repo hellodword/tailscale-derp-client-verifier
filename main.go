@@ -25,65 +25,27 @@ const (
 	defaultAddr = "localhost:3000"
 )
 
-func main() {
+type Fetcher func() ([]key.NodePublic, error)
+type Searcher func(n key.NodePublic) bool
 
+func main() {
 	addr := flag.String("addr", defaultAddr, "")
 	nodesFile := flag.String("path", "", "/path/to/nodes.json")
 	flag.Parse()
 
-	if *addr == "" {
-		*addr = os.Getenv("TS_ADDR")
-		if *addr == "" {
-			*addr = defaultAddr
-		}
-	}
-
-	if *nodesFile == "" {
-		*nodesFile = os.Getenv("TS_NODES_FILE")
-	}
-
 	var interval time.Duration
-	var fetcher func() ([]key.NodePublic, error)
+	var fetcher Fetcher
+	var searcher Searcher
 
 	if *nodesFile == "" {
 		interval = time.Minute * 10
-
-		s3AccessKey := os.Getenv("S3_ACCESS_KEY_ID")
-		s3SecretKey := os.Getenv("S3_SECRET_ACCESS_KEY")
-		s3Endpoint := os.Getenv("S3_ENDPOINT")
-		s3Region := os.Getenv("S3_REGION")
-		s3Bucket := os.Getenv("S3_BUCKET")
-		s3File := os.Getenv("S3_FILE")
-		s3ForcePathStyle := strings.ToLower(os.Getenv("S3_FORCE_PATH_STYLE")) == "true"
-		s3Object := &s3.GetObjectInput{
-			Bucket: aws.String(s3Bucket),
-			Key:    aws.String(s3File),
-		}
-
-		cfg := &aws.Config{
-			Endpoint:         aws.String(s3Endpoint),
-			Region:           aws.String(s3Region),
-			S3ForcePathStyle: aws.Bool(s3ForcePathStyle),
-			Credentials:      credentials.NewStaticCredentials(s3AccessKey, s3SecretKey, ""),
-		}
-		sess := session.Must(session.NewSession(cfg))
-
-		s3Instance := s3.New(sess)
-
-		fetcher = func() ([]key.NodePublic, error) {
-			var nodes []key.NodePublic
-			err := readJSONS3(s3Instance, s3Object, &nodes)
-			return nodes, err
-		}
-
+		fetcher = setupS3Fetcher()
 		_, err := fetcher()
 		if err != nil {
 			panic(err)
 		}
-
 	} else {
 		interval = time.Minute
-
 		fetcher = func() ([]key.NodePublic, error) {
 			var nodes []key.NodePublic
 			err := readJSONFile(*nodesFile, &nodes)
@@ -91,11 +53,13 @@ func main() {
 		}
 	}
 
-	var lock sync.Mutex
+	var lock sync.RWMutex
 	var nodes []key.NodePublic
 	var lastUpdate uint32
-	var searcher = func(n key.NodePublic) bool {
+
+	searcher = func(n key.NodePublic) bool {
 		now := uint32(time.Now().Unix())
+
 		if now > atomic.LoadUint32(&lastUpdate)+uint32(interval.Seconds()) {
 			atomic.StoreUint32(&lastUpdate, now)
 			log.Println("fetcher", "fetching")
@@ -110,8 +74,8 @@ func main() {
 			}
 		}
 
-		lock.Lock()
-		defer lock.Unlock()
+		lock.RLock()
+		defer lock.RUnlock()
 		for i := range nodes {
 			if n.Compare(nodes[i]) == 0 {
 				return true
@@ -156,6 +120,36 @@ func main() {
 	err := http.ListenAndServe(*addr, nil)
 	if err != nil {
 		os.Exit(1)
+	}
+}
+
+func setupS3Fetcher() Fetcher {
+	s3AccessKey := os.Getenv("S3_ACCESS_KEY_ID")
+	s3SecretKey := os.Getenv("S3_SECRET_ACCESS_KEY")
+	s3Endpoint := os.Getenv("S3_ENDPOINT")
+	s3Region := os.Getenv("S3_REGION")
+	s3Bucket := os.Getenv("S3_BUCKET")
+	s3File := os.Getenv("S3_FILE")
+	s3ForcePathStyle := strings.ToLower(os.Getenv("S3_FORCE_PATH_STYLE")) == "true"
+	s3Object := &s3.GetObjectInput{
+		Bucket: aws.String(s3Bucket),
+		Key:    aws.String(s3File),
+	}
+
+	cfg := &aws.Config{
+		Endpoint:         aws.String(s3Endpoint),
+		Region:           aws.String(s3Region),
+		S3ForcePathStyle: aws.Bool(s3ForcePathStyle),
+		Credentials:      credentials.NewStaticCredentials(s3AccessKey, s3SecretKey, ""),
+	}
+	sess := session.Must(session.NewSession(cfg))
+
+	s3Instance := s3.New(sess)
+
+	return func() ([]key.NodePublic, error) {
+		var nodes []key.NodePublic
+		err := readJSONS3(s3Instance, s3Object, &nodes)
+		return nodes, err
 	}
 }
 
