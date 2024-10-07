@@ -15,7 +15,7 @@ Because I want to run a Tailscale DERP server without having to trust it.
 ## Build
 
 ```sh
-# with Go 1.22.3+
+# with Go 1.23.1+
 go build -x -v -trimpath -ldflags "-s -w" -buildvcs=false -o tailscale-derp-client-verifier .
 ```
 
