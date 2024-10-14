@@ -1,0 +1,49 @@
+name: post-go-dependabot
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types:
+      - closed
+
+permissions:
+  contents: write
+
+jobs:
+  on_merged:
+    if: >
+      (github.event.pull_request.merged == true &&
+      github.repository_owner == 'hellodword' &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/')) ||
+      (github.event_name == 'workflow_dispatch' &&
+      github.repository_owner == 'hellodword')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "master"
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+
+      - run: go mod tidy
+      - run: go build -x -v -trimpath -ldflags "-s -w" -buildvcs=false -o tailscale-derp-client-verifier .
+
+      - name: config git
+        if: github.event.pull_request.merged == true
+        run: |
+          git config --global user.name github-actions[bot]
+          git config --global user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+      - name: create pr
+        if: github.event.pull_request.merged == true
+        run: |
+          git add go.mod
+          git add go.sum
+          if git commit -m "chore: [bot] go mod tidy"; then
+            git checkout -b "post/${{ github.event.pull_request.head.ref }}"
+            git push -f origin "post/${{ github.event.pull_request.head.ref }}"
+            gh pr create --fill
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
