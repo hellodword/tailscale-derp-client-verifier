@@ -37,5 +37,5 @@ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8
 gopkg.in/yaml.v2 v2.2.8/go.mod h1:hI93XBmqTisBFMUTm0b8Fm+jr3Dg1NNxqwp+5A1VGuI=
 gopkg.in/yaml.v2 v2.4.0 h1:D8xgwECY7CYvx+Y2n4sBz93Jn9JRvxdiyyo8CTfuKaY=
 gopkg.in/yaml.v2 v2.4.0/go.mod h1:RDklbk79AGWmwhnvt/jBztapEOGDOx6ZbXqjP6csGnQ=
-tailscale.com v1.78.1 h1:qGCGq6gRQEQ/bCpphD/l+fOnSheu2FzushFrRSZnjbo=
-tailscale.com v1.78.1/go.mod h1:gT7ALbLFCr2YIu0kgc9Q3tBVaTlod65D2N6jMLH11Bk=
+tailscale.com v1.78.3 h1:2BJepIEYA0ba0ZXn2rOuZjYzIV4Az+X9RS5XJF007Ug=
+tailscale.com v1.78.3/go.mod h1:gT7ALbLFCr2YIu0kgc9Q3tBVaTlod65D2N6jMLH11Bk=
