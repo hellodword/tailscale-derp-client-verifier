@@ -4,14 +4,14 @@ go 1.23.1
 
 require (
 	github.com/aws/aws-sdk-go v1.55.6
-	tailscale.com v1.78.3
+	tailscale.com v1.80.0
 )
 
 require (
-	github.com/go-json-experiment/json v0.0.0-20231102232822-2e55bd4e08b0 // indirect
+	github.com/go-json-experiment/json v0.0.0-20250103232110-6a9a0fde9288 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	go4.org/mem v0.0.0-20220726221520-4f986261bf13 // indirect
-	golang.org/x/crypto v0.31.0 // indirect
-	golang.org/x/net v0.33.0 // indirect
-	golang.org/x/sys v0.28.0 // indirect
+	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
+	golang.org/x/crypto v0.32.0 // indirect
+	golang.org/x/net v0.34.0 // indirect
+	golang.org/x/sys v0.29.1-0.20250107080300-1c14dcadc3ab // indirect
 )
