@@ -6,7 +6,7 @@ toolchain go1.24.1
 
 require (
 	github.com/aws/aws-sdk-go v1.55.7
-	tailscale.com v1.84.0
+	tailscale.com v1.84.1
 )
 
 require (
