@@ -1,14 +1,14 @@
 module github.com/hellodword/tailscale-derp-client-verifier
 
-go 1.24.4
+go 1.25.1
 
 require (
 	github.com/aws/aws-sdk-go v1.55.8
-	tailscale.com v1.86.5
+	tailscale.com v1.88.1
 )
 
 require (
-	github.com/go-json-experiment/json v0.0.0-20250223041408-d3c622f1b874 // indirect
+	github.com/go-json-experiment/json v0.0.0-20250813024750-ebf49471dced // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	golang.org/x/crypto v0.38.0 // indirect
