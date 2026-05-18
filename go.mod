@@ -1,10 +1,10 @@
 module github.com/hellodword/tailscale-derp-client-verifier
 
-go 1.26.2
+go 1.26.3
 
 require (
 	github.com/aws/aws-sdk-go v1.55.8
-	tailscale.com v1.98.1
+	tailscale.com v1.98.2
 )
 
 require (
