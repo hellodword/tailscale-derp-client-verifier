@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	github.com/aws/aws-sdk-go v1.55.8
-	tailscale.com v1.98.2
+	tailscale.com v1.98.3
 )
 
 require (
