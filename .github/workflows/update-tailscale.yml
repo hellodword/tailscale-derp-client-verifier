@@ -1,0 +1,158 @@
+name: update-tailscale
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: tailscale-derp-client-verifier-update-tailscale
+  cancel-in-progress: false
+
+env:
+  UPDATE_BRANCH_PREFIX: automation/tailscale-update-
+
+jobs:
+  prepare:
+    if: github.repository == 'hellodword/tailscale-derp-client-verifier' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      changed: ${{ steps.update.outputs.changed }}
+      head_sha: ${{ steps.commit.outputs.head_sha }}
+      pr_url: ${{ steps.pr.outputs.pr_url }}
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v7
+        with:
+          ref: master
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Refuse duplicate update pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          existing_pr="$(
+            gh pr list \
+              --base master \
+              --state open \
+              --limit 100 \
+              --json headRefName,url \
+              --jq 'map(select(.headRefName | startswith("automation/tailscale-update-"))) | .[0].url // ""'
+          )"
+          if [ -n "$existing_pr" ]; then
+            echo "::error title=Tailscale update already pending::$existing_pr"
+            exit 1
+          fi
+
+      - name: Resolve the latest Tailscale module
+        id: update
+        run: |
+          go get tailscale.com@latest
+          go mod tidy
+
+          if git diff --quiet -- go.mod go.sum; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          version="$(go list -m -f '{{.Version}}' tailscale.com)"
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error title=Unexpected Tailscale version::$version"
+            exit 1
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Commit the update
+        id: commit
+        if: steps.update.outputs.changed == 'true'
+        env:
+          UPDATE_VERSION: ${{ steps.update.outputs.version }}
+        run: |
+          branch="${UPDATE_BRANCH_PREFIX}${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git switch -c "$branch"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -- go.mod go.sum
+          git commit -m "build(deps): update tailscale.com to ${UPDATE_VERSION}"
+          git push --set-upstream origin "$branch"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Open the update pull request
+        id: pr
+        if: steps.update.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          UPDATE_BRANCH: ${{ steps.commit.outputs.branch }}
+          UPDATE_VERSION: ${{ steps.update.outputs.version }}
+        run: |
+          pr_url="$(
+            gh pr create \
+              --base master \
+              --head "$UPDATE_BRANCH" \
+              --title "build(deps): update tailscale.com to ${UPDATE_VERSION}" \
+              --body "Automated daily update of tailscale.com to ${UPDATE_VERSION}. The workflow validates module tidiness, race tests, vet, and a release build before merging."
+          )"
+          echo "pr_url=$pr_url" >> "$GITHUB_OUTPUT"
+
+  validate:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the update
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Check module metadata
+        run: go mod tidy -diff
+
+      - name: Test with the race detector
+        run: go test -race ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build -x -v -trimpath -ldflags "-s -w" -buildvcs=false -o tailscale-derp-client-verifier .
+
+  merge:
+    needs:
+      - prepare
+      - validate
+    if: needs.prepare.outputs.changed == 'true' && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Merge the validated update
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_URL: ${{ needs.prepare.outputs.pr_url }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+        run: gh pr merge "$PR_URL" --rebase --delete-branch --match-head-commit "$HEAD_SHA"

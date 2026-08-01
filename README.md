@@ -1,81 +1,88 @@
 # tailscale-derp-client-verifier
 
+`tailscale-derp-client-verifier` lets a custom Tailscale DERP server verify
+tailnet clients without enrolling the DERP host itself as a Tailscale node.
+
 ## Why
 
-Because I want to run a Tailscale DERP server without having to trust it.
+1. Tailscale traffic is end-to-end encrypted by design.[^1]
+2. An untrusted DERP server cannot decrypt relayed traffic.[^2]
+3. derper's `--verify-clients` mode requires a local Tailscale node on the DERP
+   host.
+4. `--verify-client-url` delegates client admission to an external HTTP
+   service.[^3]
 
-1. `Tailscale` is `end-to-end encrypted` by design[^1]
-
-2. An insecure DERP server or connection is still secure for DERP users; there are no MITM issues[^2]
-
-3. `--verify-clients` requires adding this DERP server as one of your Tailscale nodes. In my opinion, this is risky, even with ACLs.
-
-4. `--verify-client-url` allows derper to check an external URL to permit access[^3]
+This verifier implements that HTTP service and admits node public keys found in
+a local `nodes.json` file.
 
 ## Build
 
 ```sh
-# with latest Go
+# With the Go version declared in go.mod.
 go build -x -v -trimpath -ldflags "-s -w" -buildvcs=false -o tailscale-derp-client-verifier .
 ```
 
-## Usage
+## Update `nodes.json`
 
-1. **On the trusted Tailscale node machine**: get the nodes list from your trusted homelab server or laptop, and sync the `nodes.json` to the DERP server machine:
-
-You can achieve this in many ways. I do this with rclone, systemd timer, and S3 object storage::
+Generate the allowlist on a trusted machine that is already connected to the
+tailnet and can see every node that should use the DERP server. Tailscale
+documents `tailscale status --json` as machine-readable output suitable for
+automation.[^4]
 
 ```sh
-#! /usr/bin/env bash
-set -e
-set -x
+tailscale status --json |
+  jq -c '[.Self.PublicKey, (.Peer[]?.PublicKey)]
+    | map(select(type == "string" and startswith("nodekey:")))
+    | sort
+    | unique' > nodes.json.new
 
-[ -f "$RCLONE_CONFIG_FILE" ]
-[ -d "$WORK_DIR" ]
-[ -n "$TAILSCALE_S3_REMOTE_NAME" ]
-[ -n "$TAILSCALE_S3_BUCKET" ]
-
-cd $WORK_DIR
-
-tailscale status --json | jq '[recurse | objects | with_entries(select(.key == "PublicKey")) | .[]] | sort' > "temp.nodes.json"
-
-jq -e . "temp.nodes.json"
-
-if [ "$(cat "nodes.json" || true)" != "$(cat "temp.nodes.json")" ]; then
-  rclone --config "$RCLONE_CONFIG_FILE" --contimeout=3m --timeout=10m --checksum copyto \
-    "temp.nodes.json" "$TAILSCALE_S3_REMOTE_NAME:$TAILSCALE_S3_BUCKET/nodes.json"
-  mv "temp.nodes.json" "nodes.json"
-fi
+jq -e '
+  type == "array" and
+  length > 0 and
+  all(.[]; type == "string" and startswith("nodekey:"))
+' nodes.json.new > /dev/null
 ```
 
-2. **On the DERP server machine**: run `tailscale-derp-client-verifier`
+Review the generated keys, then deliver `nodes.json.new` to the DERP host using
+an authenticated mechanism already standard in your environment. Place the
+temporary file in the same directory as the live file and rename it there so
+readers see an atomic replacement:
 
-If you're not syncing the `nodes.json` with S3 object storage, use the `-path` argument:
+```sh
+mv -- /path/to/nodes.json.new /path/to/nodes.json
+```
+
+Run this update periodically and after adding, removing, or reauthenticating
+nodes. Node public keys can change when a device reauthenticates.[^5]
+
+The verifier reloads the file in the background every 30 seconds by default,
+even when it is not receiving requests. `-path` itself remains fixed for the
+lifetime of the process; replace the file at that path atomically, or restart
+the process to use a different path. A missing, malformed, oversized, or empty
+runtime update leaves the last valid in-memory list active and is retried on the
+next interval. Node files larger than 16 MiB are considered oversized. Startup
+fails for the same conditions. An empty list is accepted only when the verifier
+is started with `-allow-empty`.
+
+## Run
+
+The nodes file path is required:
 
 ```sh
 /path/to/tailscale-derp-client-verifier -path /path/to/nodes.json
 ```
 
-I use S3, so I:
+Use `-reload-interval` to change the polling period; values shorter than one
+second are rejected:
 
 ```sh
-. .env
-
-/path/to/tailscale-derp-client-verifier
+/path/to/tailscale-derp-client-verifier \
+  -path /path/to/nodes.json \
+  -reload-interval 10s
 ```
 
-```ini
-# .env file
-S3_ACCESS_KEY_ID=
-S3_SECRET_ACCESS_KEY=
-S3_ENDPOINT=
-S3_REGION=
-S3_BUCKET=
-S3_FILE=nodes.json
-S3_FORCE_PATH_STYLE=
-```
-
-3. **On the DERP server machine**: deploy the derper
+The verifier listens on `localhost:3000` by default; change this with `-addr`.
+Configure derper to use it:
 
 ```sh
 derper <... other args> --verify-clients=false --verify-client-url-fail-open=false --verify-client-url=http://127.0.0.1:3000
@@ -84,3 +91,5 @@ derper <... other args> --verify-clients=false --verify-client-url-fail-open=fal
 [^1]: https://tailscale.com/security
 [^2]: https://github.com/tailscale/tailscale/issues/12107#issuecomment-2106233579
 [^3]: https://github.com/tailscale/tailscale/pull/11193
+[^4]: https://tailscale.com/docs/reference/tailscale-cli#status
+[^5]: https://tailscale.com/docs/concepts/node-keys

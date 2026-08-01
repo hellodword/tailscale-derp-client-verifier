@@ -1,172 +1,99 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"io"
-	"log"
-	"net/http"
+	"log/slog"
 	"os"
-	"strings"
-	"sync"
-	"sync/atomic"
+	"os/signal"
+	"syscall"
 	"time"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"tailscale.com/tailcfg"
-	"tailscale.com/types/key"
 )
 
 const (
-	defaultAddr = "localhost:3000"
+	defaultAddr           = "localhost:3000"
+	defaultReloadInterval = 30 * time.Second
+	minReloadInterval     = time.Second
 )
 
-type Fetcher func() ([]key.NodePublic, error)
-type Searcher func(n key.NodePublic) bool
+var errPathRequired = errors.New("-path is required")
+
+type config struct {
+	addr           string
+	nodesPath      string
+	reloadInterval time.Duration
+	allowEmpty     bool
+}
+
+type serveFunc func(context.Context, config, *slog.Logger) error
 
 func main() {
-	addr := flag.String("addr", defaultAddr, "")
-	nodesFile := flag.String("path", "", "/path/to/nodes.json")
-	flag.Parse()
-
-	var interval time.Duration
-	var fetcher Fetcher
-	var searcher Searcher
-
-	if *nodesFile == "" {
-		interval = time.Minute * 10
-		fetcher = setupS3Fetcher()
-		_, err := fetcher()
-		if err != nil {
-			panic(err)
-		}
-	} else {
-		interval = time.Minute
-		fetcher = func() ([]key.NodePublic, error) {
-			var nodes []key.NodePublic
-			err := readJSONFile(*nodesFile, &nodes)
-			return nodes, err
-		}
-	}
-
-	var lock sync.RWMutex
-	var nodes []key.NodePublic
-	var lastUpdate uint32
-
-	searcher = func(n key.NodePublic) bool {
-		now := uint32(time.Now().Unix())
-
-		if now > atomic.LoadUint32(&lastUpdate)+uint32(interval.Seconds()) {
-			atomic.StoreUint32(&lastUpdate, now)
-			log.Println("fetcher", "fetching")
-			_nodes, err := fetcher()
-			if err != nil {
-				log.Println("fetcher", err)
-			} else {
-				lock.Lock()
-				nodes = _nodes
-				lock.Unlock()
-				log.Println("fetcher", "updated")
-			}
-		}
-
-		lock.RLock()
-		defer lock.RUnlock()
-		for i := range nodes {
-			if n.Compare(nodes[i]) == 0 {
-				return true
-			}
-		}
-		return false
-	}
-
-	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
-		var buf = bytes.NewBuffer(nil)
-		var req tailcfg.DERPAdmitClientRequest
-		err := json.NewDecoder(io.TeeReader(io.LimitReader(r.Body, 1<<13), buf)).Decode(&req)
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		var resp tailcfg.DERPAdmitClientResponse
-
-		resp.Allow = searcher(req.NodePublic)
-
-		if resp.Allow {
-			log.Println("allowed", req.NodePublic, req.Source)
-		}
-
-		b, err := json.Marshal(resp)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		w.Write(b)
-	}))
-
-	log.Println("serving", *addr)
-	err := http.ListenAndServe(*addr, nil)
-	if err != nil {
-		os.Exit(1)
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	exitCode := runCLI(ctx, os.Args[1:], os.Stderr, logger, serve)
+	stop()
+	os.Exit(exitCode)
 }
 
-func setupS3Fetcher() Fetcher {
-	s3AccessKey := os.Getenv("S3_ACCESS_KEY_ID")
-	s3SecretKey := os.Getenv("S3_SECRET_ACCESS_KEY")
-	s3Endpoint := os.Getenv("S3_ENDPOINT")
-	s3Region := os.Getenv("S3_REGION")
-	s3Bucket := os.Getenv("S3_BUCKET")
-	s3File := os.Getenv("S3_FILE")
-	s3ForcePathStyle := strings.ToLower(os.Getenv("S3_FORCE_PATH_STYLE")) == "true"
-	s3Object := &s3.GetObjectInput{
-		Bucket: aws.String(s3Bucket),
-		Key:    aws.String(s3File),
+func runCLI(ctx context.Context, args []string, stderr io.Writer, logger *slog.Logger, serveFn serveFunc) int {
+	cfg, err := parseConfig(args, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if err != nil {
+		writeDiagnostic(stderr, "error: %v\n", err)
+		return 2
 	}
 
-	cfg := &aws.Config{
-		Endpoint:         aws.String(s3Endpoint),
-		Region:           aws.String(s3Region),
-		S3ForcePathStyle: aws.Bool(s3ForcePathStyle),
-		Credentials:      credentials.NewStaticCredentials(s3AccessKey, s3SecretKey, ""),
+	if err := serveFn(ctx, cfg, logger); err != nil {
+		writeDiagnostic(stderr, "error: %v\n", err)
+		return 1
 	}
-	sess := session.Must(session.NewSession(cfg))
-
-	s3Instance := s3.New(sess)
-
-	return func() ([]key.NodePublic, error) {
-		var nodes []key.NodePublic
-		err := readJSONS3(s3Instance, s3Object, &nodes)
-		return nodes, err
-	}
+	return 0
 }
 
-func readJSONS3(instance *s3.S3, object *s3.GetObjectInput, v interface{}) error {
-	r, err := instance.GetObject(object)
-	if err != nil {
-		return err
+func parseConfig(args []string, stderr io.Writer) (config, error) {
+	fs := flag.NewFlagSet("tailscale-derp-client-verifier", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	cfg := config{reloadInterval: defaultReloadInterval}
+	fs.StringVar(&cfg.addr, "addr", defaultAddr, "address to listen on")
+	fs.StringVar(&cfg.nodesPath, "path", "", "path to nodes.json (required)")
+	fs.DurationVar(&cfg.reloadInterval, "reload-interval", defaultReloadInterval, "interval between nodes.json reloads (minimum 1s)")
+	fs.BoolVar(&cfg.allowEmpty, "allow-empty", false, "allow an empty nodes list that denies every client")
+	fs.Usage = func() {
+		writeDiagnostic(stderr, "Usage: %s -path /path/to/nodes.json [options]\n", fs.Name())
+		fs.PrintDefaults()
 	}
-	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(v)
+
+	if err := fs.Parse(args); err != nil {
+		return config{}, err
+	}
+	if fs.NArg() != 0 {
+		return config{}, fmt.Errorf("unexpected positional arguments: %q", fs.Args())
+	}
+	if err := cfg.validate(); err != nil {
+		if errors.Is(err, errPathRequired) {
+			fs.Usage()
+		}
+		return config{}, err
+	}
+	return cfg, nil
 }
 
-func readJSONFile(path string, v interface{}) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
+func (cfg config) validate() error {
+	if cfg.nodesPath == "" {
+		return errPathRequired
 	}
-	defer f.Close()
-	return json.NewDecoder(f).Decode(v)
+	if cfg.reloadInterval < minReloadInterval {
+		return fmt.Errorf("-reload-interval must be at least %s", minReloadInterval)
+	}
+	return nil
+}
+
+func writeDiagnostic(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, format, args...)
 }
