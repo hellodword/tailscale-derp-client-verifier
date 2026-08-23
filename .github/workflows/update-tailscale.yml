@@ -58,6 +58,7 @@ jobs:
       - name: Resolve the latest Tailscale module
         id: update
         run: |
+          export GOTOOLCHAIN=auto
           go get tailscale.com@latest
           go mod tidy
 
