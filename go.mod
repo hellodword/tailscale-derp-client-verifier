@@ -1,8 +1,8 @@
 module github.com/hellodword/tailscale-derp-client-verifier
 
-go 1.27.1
+go 1.27.3
 
-require tailscale.com v1.104.1
+require tailscale.com v1.104.2
 
 require (
 	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 // indirect
