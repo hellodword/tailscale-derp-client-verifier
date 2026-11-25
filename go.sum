@@ -26,5 +26,5 @@ golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba h1:Ck8QetSgk912qxWLMCKxd0in+
 golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba/go.mod h1:50RgIsmK7OwqzTTeqcSXQW8SswW0o8fRcDxmqGluJ8E=
 golang.org/x/sys v0.50.0 h1:dkKZEFTEKaLr1sjhs0WiKqoi8Jj5nHbS3Njmx1UoMJs=
 golang.org/x/sys v0.50.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
-tailscale.com v1.106.0 h1:I84MMIsyAufdibuP8hLYU0ZuZI6Zu5ujg6ANR54hDP0=
-tailscale.com v1.106.0/go.mod h1:eVHgu17wdbpt5GNukZWlvV1YKlBt3rn0lguCyab6+t8=
+tailscale.com v1.106.1 h1:MEOYydLTNoxRsrI3X7v6fdtFZO+ZZjBkZc23cYPjvhc=
+tailscale.com v1.106.1/go.mod h1:eVHgu17wdbpt5GNukZWlvV1YKlBt3rn0lguCyab6+t8=
